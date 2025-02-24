@@ -1,0 +1,8 @@
+python-dotenv
+langchain
+langgraph
+langchain-community
+langchain-openai
+typing-extensions
+openai
+fastapi[standard]

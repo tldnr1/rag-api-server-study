@@ -1,0 +1,9 @@
+POST https://reimagined-chainsaw-65jx5qqg57vf4w67-8000.app.github.dev/train
+
+###
+
+GET https://reimagined-chainsaw-65jx5qqg57vf4w67-8000.app.github.dev/predict/left/0/right/0
+
+###
+
+GET https://reimagined-chainsaw-65jx5qqg57vf4w67-8000.app.github.dev/predict/left/1/right/0
