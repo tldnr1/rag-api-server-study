@@ -2,7 +2,7 @@ from fastapi import FastAPI, Query
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-import sql_chat_model
+import translate.sql_chat_model as sql_chat_model
 app = FastAPI()
 
 # app.mount("/static", StaticFiles(directory="static"), name="static")

@@ -1,7 +1,7 @@
 # server.py
 from fastapi import FastAPI, Query, Body
 from fastapi.responses import JSONResponse
-import sql_chat_model
+import translate.sql_chat_model as sql_chat_model
 from recommendation_model import RecommendationModel
 
 app = FastAPI()
