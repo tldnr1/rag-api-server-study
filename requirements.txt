@@ -6,3 +6,4 @@ langchain-openai
 typing-extensions
 openai
 fastapi[standard]
+tiktoken

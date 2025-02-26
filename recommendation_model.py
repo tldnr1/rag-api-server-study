@@ -1,102 +1,122 @@
-# recommendation_model.py
+# import sqlite3
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage, BaseMessage
+from langchain_core.messages import HumanMessage #, BaseMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_community.chat_message_histories import SQLChatMessageHistory
-from langgraph.checkpoint.memory import MemorySaver  
-from langgraph.graph import START, StateGraph
-from langgraph.graph.message import add_messages
-from typing import Sequence
-from typing_extensions import Annotated, TypedDict
 from langchain_openai import ChatOpenAI
-from langchain_core.runnables.history import RunnableWithMessageHistory
+#from langchain_core.runnables.history import RunnableWithMessageHistory
 
+# 데이터 처리 함수 로드
+from data_processor import process_prompt_data
+
+# API KEY 자동 로드
 load_dotenv()
 
+
 class RecommendationModel:
-    class State(TypedDict):
-        messages: Annotated[Sequence[BaseMessage], add_messages]
-        language: str
-        user_info: dict  # 예: {"birth": "1990-01-01", "gender": "여성", "MBTI": "INFJ", ...}
+    """
+    GPT-4o 기반 추천 시스템.
+    """
 
     def __init__(self, model_name="gpt-4o-mini", model_provider="openai"):
-        # 모델 초기화
+        """
+        모델 및 대화 히스토리 초기화.
+        """
+        # LangChain 모델 초기화
         self.model = init_chat_model(model_name, model_provider=model_provider)
         self.llm = ChatOpenAI(model_name=model_name)
 
-        # 사용자 정보와 대화 히스토리를 반영한 추천 프롬프트 템플릿
+        # 프롬프트 템플릿 설정
         self.prompt_template = ChatPromptTemplate.from_messages([
-            (
-                "system",
-                "당신은 패션 및 라이프스타일 추천 어시스턴트입니다. 사용자의 생년월일, 성별, MBTI, \
-                그리고 운세(추후 API 연동 예정) 등의 정보를 바탕으로 개인 맞춤형 추천을 제공하세요. 답변은 {language}로 해주세요."
-            ),
-            ("system", "사용자 정보: {user_info}"),
+            ("system", "{context}"),
             MessagesPlaceholder(variable_name="history"),
             ("human", "{question}")
         ])
 
-        # 대화 히스토리 및 메모리 설정
-        self.memory = MemorySaver()
-        self.chat_message_history = SQLChatMessageHistory(
-            session_id="recommend_session", connection_string="sqlite:///sqlite_recommend.db"
-        )
+        # SQLite 기반 대화 히스토리 저장 설정
+        self.db_connection = "sqlite:///sqlite_recommend.db"
 
-        # LangGraph 기반 워크플로우 생성 (추후 RAG 기능 강화 가능)
-        self.workflow = self._build_workflow()
-        self.app = self.workflow.compile(checkpointer=self.memory)
+    def _get_chat_history(self, session_id: str):
+        """
+        특정 세션의 대화 히스토리를 가져옴.
+        """
+        chat_history = SQLChatMessageHistory(session_id=session_id, connection_string=self.db_connection)
+        return chat_history.messages
 
-        # LangChain의 메시지 히스토리 기능 연동
-        self.chain = self.prompt_template | self.llm
-        self.chain_with_history = RunnableWithMessageHistory(
-            self.chain,
-            lambda session_id: SQLChatMessageHistory(session_id=session_id, connection_string="sqlite:///sqlite_recommend.db"),
-            input_messages_key="question",
-            history_messages_key="history",
-        )
-
-    def _build_workflow(self):
-        workflow = StateGraph(state_schema=self.State)
-        workflow.add_node("model", self._call_model)
-        workflow.add_edge(START, "model")
-        return workflow
-
-    def _call_model(self, state: State):
-        # 과거 대화 기록을 불러와 현재 상태와 결합
-        past_messages = self.chat_message_history.messages
-        all_messages = past_messages + state["messages"]
-
-        # 최근 사용자의 질문 추출 (없으면 기본 질문 사용)
-        last_human_message = next(
-            (msg.content for msg in reversed(all_messages) if isinstance(msg, HumanMessage)), 
+    def _get_last_user_message(self, messages):
+        """
+        사용자 메시지 중 가장 최근 메시지를 추출.
+        """
+        return next(
+            (msg.content for msg in reversed(messages) if isinstance(msg, HumanMessage)),
             "안녕하세요, 어떤 추천을 원하시는지 알려주세요."
         )
 
-        # 프롬프트 생성 (대화 히스토리, 언어, 질문, 사용자 정보 포함)
+    def get_recommendation(self, clean_data: dict, session_id: str = "default_session"):
+        """
+        정제된 데이터를 기반으로 GPT 프롬프트를 생성하고 실행.
+        """
+        # 1. 대화 히스토리 로드
+        past_messages = self._get_chat_history(session_id)
+        input_messages = [HumanMessage(clean_data["question"])]
+        all_messages = past_messages + input_messages
+
+        # 2. 최근 질문 추출
+        last_human_message = self._get_last_user_message(all_messages)
+
+        # 3. 프롬프트 생성
+        context = process_prompt_data(clean_data)
+
+        # 4. 프롬프트 템플릿 적용
         prompt = self.prompt_template.invoke({
+            "context": context,
             "history": all_messages,
-            "language": state["language"],
-            "question": last_human_message,
-            "user_info": state["user_info"],
+            "question": last_human_message
         })
 
-        # 모델 실행 및 응답 반환
+        # 5. GPT 실행
         response = self.model.invoke(prompt)
-        return {"messages": all_messages + [response]}
 
-    def get_recommendation(self, question: str, user_info: dict, language: str = "ko", session_id: str = "default_session"):
-        """
-        사용자 질문과 개인 정보를 받아 추천 결과를 생성합니다.
-        """
-        input_messages = [HumanMessage(question)]
-        self.chat_message_history.add_user_message(question)
-        
-        output = self.app.invoke(
-            {"messages": input_messages, "language": language, "user_info": user_info},
-            {"configurable": {"thread_id": session_id}}
-        )
-        
-        ai_response = output["messages"][-1].content
-        self.chat_message_history.add_ai_message(ai_response)
-        return ai_response
+        # 6. 대화 히스토리 저장
+        chat_history = SQLChatMessageHistory(session_id=session_id, connection_string=self.db_connection)
+        chat_history.add_user_message(last_human_message)
+        chat_history.add_ai_message(response.content)
+
+        # 7. 토큰 사용량 분석
+        show_token_result(str(prompt), response.content)
+
+        return response.content
+
+
+''' 토큰 사용량 분석 함수 '''
+import tiktoken
+
+def get_token_count(text: str, model_name: str = "gpt-4o-mini") -> int:
+    """
+    텍스트의 토큰 개수를 반환하는 함수.
+    """
+    try:
+        encoding = tiktoken.encoding_for_model(model_name)
+    except Exception:
+        encoding = tiktoken.get_encoding("cl100k_base")
+    return len(encoding.encode(text))
+
+
+def show_token_result(prompt: str, response_text: str, model_name: str = "gpt-4o-mini"):
+    """
+    프롬프트와 응답의 토큰 사용량을 분석하여 출력.
+    """
+    input_token_count = get_token_count(prompt, model_name)
+    output_token_count = get_token_count(response_text, model_name)
+
+    input_rate = 0.150 / 1_000_000  # $ per token for input tokens
+    output_rate = 0.600 / 1_000_000  # $ per token for output tokens
+
+    iteration_cost = (input_token_count * input_rate) + (output_token_count * output_rate)
+    estimated_cost_100 = iteration_cost * 100
+
+    print(f"[DEBUG] Input token count: {input_token_count}")
+    print(f"[DEBUG] Output token count: {output_token_count}")
+    print(f"[DEBUG] Cost for this iteration: ${iteration_cost:.8f}")
+    print(f"[DEBUG] Estimated cost for 100 iterations: ${estimated_cost_100:.8f}")

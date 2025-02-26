@@ -18,7 +18,7 @@ class RecommendationModel:
     class State(TypedDict):
         messages: Annotated[Sequence[BaseMessage], add_messages]
         language: str
-        user_info: dict  # 예: {"birth": "1990-01-01", "gender": "여성", "MBTI": "INFJ", ...}
+        user_info: dict
 
     def __init__(self, model_name="gpt-4o-mini", model_provider="openai"):
         # 모델 초기화
@@ -37,7 +37,7 @@ class RecommendationModel:
             ("human", "{question}")
         ])
 
-        # 대화 히스토리 및 메모리 설정
+        # 대화 히스토리 및 메모리 설정 (SQLite 저장)
         self.memory = MemorySaver()
         self.chat_message_history = SQLChatMessageHistory(
             session_id="recommend_session", connection_string="sqlite:///sqlite_recommend.db"
